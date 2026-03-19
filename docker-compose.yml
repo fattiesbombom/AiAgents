@@ -1,0 +1,65 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+  postgres-input:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${INPUT_DB_NAME:-security_input}
+      POSTGRES_USER: ${INPUT_DB_USER:-security}
+      POSTGRES_PASSWORD: ${INPUT_DB_PASSWORD:-security}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_input:/var/lib/postgresql/data
+
+  postgres-output:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${OUTPUT_DB_NAME:-security_output}
+      POSTGRES_USER: ${OUTPUT_DB_USER:-security}
+      POSTGRES_PASSWORD: ${OUTPUT_DB_PASSWORD:-security}
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_output:/var/lib/postgresql/data
+
+  backend:
+    image: python:3.11-slim
+    working_dir: /app
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./backend:/app/backend
+      - ./requirements.txt:/app/requirements.txt
+    ports:
+      - "8000:8000"
+    command: bash -lc "pip install -r requirements.txt && python -c \"print('backend container ready (no app logic yet)')\" && sleep infinity"
+    depends_on:
+      - ollama
+      - postgres-input
+      - postgres-output
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    env_file:
+      - .env
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "5173:5173"
+    command: sh -lc "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - backend
+
+volumes:
+  ollama:
+  postgres_input:
+  postgres_output:

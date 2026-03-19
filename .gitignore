@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+.pnp/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.venv*/
+.env
+
+# Build / dist
+dist/
+build/
+
+# Local runtime/data
+data/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Frontend lockfiles and artifacts (keep minimal)
+# package-lock.json is okay to keep, but remove if you want a lean repo:
+package-lock.json
+

@@ -1,0 +1,27 @@
+# Backend Python dependencies for the security AI system (no logic yet).
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-dotenv
+httpx
+tenacity
+
+langchain
+langgraph
+langchain-ollama
+
+ollama
+
+opencv-python
+ultralytics
+
+psycopg[binary]
+asyncpg
+pgvector
+
+# Supabase integration via HTTP/JWT (avoid supabase SDK build deps on Windows)
+pyjwt[crypto]
+cryptography
+
+mcp
