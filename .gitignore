@@ -12,6 +12,12 @@ __pycache__/
 # Build / dist
 dist/
 build/
+*.tsbuildinfo
+
+# Accidental TS emit next to sources (we use .ts/.tsx only)
+frontend/src/**/*.js
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 # Local runtime/data
 data/
@@ -21,8 +27,4 @@ data/
 Thumbs.db
 .vscode/
 .idea/
-
-# Frontend lockfiles and artifacts (keep minimal)
-# package-lock.json is okay to keep, but remove if you want a lean repo:
-package-lock.json
 

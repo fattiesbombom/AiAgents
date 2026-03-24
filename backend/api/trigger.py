@@ -31,7 +31,8 @@ def _configure_logging() -> None:
 
 
 def _cors_origins() -> list[str]:
-    return settings.ALLOWED_ORIGINS
+    raw = settings.ALLOWED_ORIGINS or "http://localhost:5173"
+    return [s.strip() for s in raw.split(",") if s.strip()]
 
 
 class TriggerEvent(BaseModel):

@@ -24,7 +24,9 @@ class YOLODetector:
         self.confidence_threshold = float(confidence_threshold)
         self._model = YOLO(model_path)
 
-        self.threat_labels = [s.strip().lower() for s in settings.YOLO_THREAT_LABELS if s.strip()]
+        self.threat_labels = [
+            s.strip().lower() for s in settings.YOLO_THREAT_LABELS.split(",") if s.strip()
+        ]
 
     def detect(self, frame: np.ndarray) -> list[dict]:
         results = self._model.predict(frame, conf=self.confidence_threshold, verbose=False)
