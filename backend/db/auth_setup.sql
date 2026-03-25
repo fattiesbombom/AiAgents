@@ -5,20 +5,55 @@
 -- Dashboard → Settings → API → Expose ``profiles`` under Schema ``public`` (or use SQL grants).
 
 -- ---------------------------------------------------------------------------
--- 1) Profiles (one row per auth user; source of truth for rank / zone / SCC)
+-- 1) Base table (fresh installs)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE,
-  rank VARCHAR NOT NULL DEFAULT 'SO'
-    CHECK (rank IN ('SO', 'SSO', 'SS', 'SSS', 'CSO')),
+  role_type VARCHAR NOT NULL DEFAULT 'security_officer',
+  rank VARCHAR,
   role_label VARCHAR NOT NULL DEFAULT 'Security Officer',
-  deployment_type VARCHAR NOT NULL DEFAULT 'ground'
-    CHECK (deployment_type IN ('ground', 'command_centre')),
+  deployment_type VARCHAR,
+  todays_assignment VARCHAR,
+  assignment_set_at TIMESTAMPTZ,
   assigned_zone VARCHAR,
   badge_id VARCHAR UNIQUE,
   full_name VARCHAR,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ---------------------------------------------------------------------------
+-- 2) Legacy upgrades (idempotent)
+-- ---------------------------------------------------------------------------
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role_type VARCHAR;
+UPDATE public.profiles SET role_type = 'security_officer' WHERE role_type IS NULL;
+ALTER TABLE public.profiles ALTER COLUMN role_type SET DEFAULT 'security_officer';
+ALTER TABLE public.profiles ALTER COLUMN role_type SET NOT NULL;
+
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS todays_assignment VARCHAR;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS assignment_set_at TIMESTAMPTZ;
+
+ALTER TABLE public.profiles ALTER COLUMN rank DROP NOT NULL;
+ALTER TABLE public.profiles ALTER COLUMN deployment_type DROP NOT NULL;
+
+ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_role_type_check;
+ALTER TABLE public.profiles ADD CONSTRAINT profiles_role_type_check
+  CHECK (role_type IN ('security_officer', 'auxiliary_police', 'enforcement_officer'));
+
+ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_todays_assignment_check;
+ALTER TABLE public.profiles ADD CONSTRAINT profiles_todays_assignment_check
+  CHECK (todays_assignment IS NULL OR todays_assignment IN ('ground', 'command_centre'));
+
+ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_rank_check;
+ALTER TABLE public.profiles ADD CONSTRAINT profiles_rank_check
+  CHECK (rank IS NULL OR rank IN ('SO', 'SSO', 'SS', 'SSS', 'CSO'));
+
+ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_deployment_type_check;
+ALTER TABLE public.profiles ADD CONSTRAINT profiles_deployment_type_check
+  CHECK (deployment_type IS NULL OR deployment_type IN ('ground', 'command_centre'));
+
+ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_rank_role_type_check;
+ALTER TABLE public.profiles ADD CONSTRAINT profiles_rank_role_type_check
+  CHECK (role_type = 'security_officer' OR rank IS NULL);
 
 CREATE INDEX IF NOT EXISTS profiles_badge_id_idx ON public.profiles (badge_id);
 CREATE INDEX IF NOT EXISTS profiles_assigned_zone_idx ON public.profiles (assigned_zone);
@@ -26,7 +61,7 @@ CREATE INDEX IF NOT EXISTS profiles_assigned_zone_idx ON public.profiles (assign
 COMMENT ON TABLE public.profiles IS 'Certis operator profile; synced from auth sign-up metadata via trigger.';
 
 -- ---------------------------------------------------------------------------
--- 2) Auto-create profile on sign-up
+-- 3) Auto-create profile on sign-up
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
@@ -35,24 +70,28 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  v_role_type text;
   v_rank text;
   v_deploy text;
+  v_role_label text;
 BEGIN
-  v_rank := COALESCE(NEW.raw_user_meta_data->>'rank', 'SO');
-  IF v_rank NOT IN ('SO', 'SSO', 'SS', 'SSS', 'CSO') THEN
-    v_rank := 'SO';
+  v_role_type := NULLIF(LOWER(TRIM(NEW.raw_user_meta_data->>'role_type')), '');
+  IF v_role_type IS NULL OR v_role_type NOT IN ('security_officer', 'auxiliary_police', 'enforcement_officer') THEN
+    v_role_type := 'security_officer';
   END IF;
 
-  v_deploy := COALESCE(NEW.raw_user_meta_data->>'deployment_type', 'ground');
-  IF v_deploy NOT IN ('ground', 'command_centre') THEN
-    v_deploy := 'ground';
-  END IF;
+  IF v_role_type = 'security_officer' THEN
+    v_rank := COALESCE(NULLIF(TRIM(NEW.raw_user_meta_data->>'rank'), ''), 'SO');
+    IF v_rank NOT IN ('SO', 'SSO', 'SS', 'SSS', 'CSO') THEN
+      v_rank := 'SO';
+    END IF;
 
-  INSERT INTO public.profiles (id, rank, role_label, deployment_type, assigned_zone, badge_id, full_name)
-  VALUES (
-    NEW.id,
-    v_rank,
-    COALESCE(
+    v_deploy := COALESCE(NULLIF(TRIM(NEW.raw_user_meta_data->>'deployment_type'), ''), 'ground');
+    IF v_deploy NOT IN ('ground', 'command_centre') THEN
+      v_deploy := 'ground';
+    END IF;
+
+    v_role_label := COALESCE(
       NULLIF(TRIM(NEW.raw_user_meta_data->>'role_label'), ''),
       CASE v_rank
         WHEN 'SO' THEN 'Security Officer'
@@ -62,12 +101,54 @@ BEGIN
         WHEN 'CSO' THEN 'Chief Security Officer'
         ELSE 'Security Officer'
       END
-    ),
-    v_deploy,
-    NULLIF(TRIM(NEW.raw_user_meta_data->>'assigned_zone'), ''),
-    NULLIF(TRIM(NEW.raw_user_meta_data->>'badge_id'), ''),
-    NULLIF(TRIM(NEW.raw_user_meta_data->>'full_name'), '')
-  );
+    );
+
+    INSERT INTO public.profiles (
+      id, role_type, rank, role_label, deployment_type,
+      todays_assignment, assignment_set_at,
+      assigned_zone, badge_id, full_name
+    )
+    VALUES (
+      NEW.id,
+      v_role_type,
+      v_rank,
+      v_role_label,
+      v_deploy,
+      NULL,
+      NULL,
+      NULLIF(TRIM(NEW.raw_user_meta_data->>'assigned_zone'), ''),
+      NULLIF(TRIM(NEW.raw_user_meta_data->>'badge_id'), ''),
+      NULLIF(TRIM(NEW.raw_user_meta_data->>'full_name'), '')
+    );
+  ELSE
+    v_role_label := COALESCE(
+      NULLIF(TRIM(NEW.raw_user_meta_data->>'role_label'), ''),
+      CASE v_role_type
+        WHEN 'auxiliary_police' THEN 'Auxiliary Police Officer'
+        WHEN 'enforcement_officer' THEN 'Enforcement Officer'
+        ELSE 'Officer'
+      END
+    );
+
+    INSERT INTO public.profiles (
+      id, role_type, rank, role_label, deployment_type,
+      todays_assignment, assignment_set_at,
+      assigned_zone, badge_id, full_name
+    )
+    VALUES (
+      NEW.id,
+      v_role_type,
+      NULL,
+      v_role_label,
+      NULL,
+      NULL,
+      NULL,
+      NULLIF(TRIM(NEW.raw_user_meta_data->>'assigned_zone'), ''),
+      NULLIF(TRIM(NEW.raw_user_meta_data->>'badge_id'), ''),
+      NULLIF(TRIM(NEW.raw_user_meta_data->>'full_name'), '')
+    );
+  END IF;
+
   RETURN NEW;
 END;
 $$;
@@ -76,22 +157,21 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW
-  EXECUTE PROCEDURE public.handle_new_user();
+  EXECUTE FUNCTION public.handle_new_user();
 
 -- ---------------------------------------------------------------------------
--- 3) Row Level Security — profiles
+-- 4) Row Level Security — profiles
 -- ---------------------------------------------------------------------------
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
--- Authenticated users can read their own profile (dashboard / mobile).
+DROP POLICY IF EXISTS profiles_select_own ON public.profiles;
 CREATE POLICY profiles_select_own
   ON public.profiles
   FOR SELECT
   TO authenticated
   USING (auth.uid() = id);
 
--- Optional: allow users to update non-privileged fields only if you expose PATCH;
--- keep rank changes admin-only in production (use service role or Edge Function).
+DROP POLICY IF EXISTS profiles_update_own ON public.profiles;
 CREATE POLICY profiles_update_own
   ON public.profiles
   FOR UPDATE
@@ -100,22 +180,3 @@ CREATE POLICY profiles_update_own
   WITH CHECK (auth.uid() = id);
 
 -- Service role bypasses RLS (used by backend MCP with SUPABASE_SERVICE_ROLE_KEY).
-
--- ---------------------------------------------------------------------------
--- 4) Incident RLS (documented — apply if you replicate incidents into Supabase)
---
--- Your app’s canonical incidents may live on a separate OUTPUT Postgres.
--- If you add e.g. public.incidents_sync in Supabase, consider:
---
---   SO:        SELECT where incident is assigned to auth.uid() OR
---              user’s profile.assigned_zone matches incident.zone AND user is SO
---              (narrow “own dispatches” — adjust columns to your model).
---
---   SSO / SS:  SELECT where incident.zone (or location) matches
---              profiles.assigned_zone for auth.uid().
---
---   SSS / CSO: SELECT true (full read within org) or scope by site_id if multi-tenant.
---
--- Escalation approval remains enforced in the application (human_review API),
--- not only in RLS.
--- ---------------------------------------------------------------------------

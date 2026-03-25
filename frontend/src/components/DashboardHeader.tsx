@@ -22,7 +22,7 @@ export function DashboardHeader({ profile, title, subtitle, onLogout, logoutLoad
       <div className="db-header__user">
         <div className="db-header__who">
           <span className="db-header__name">{profile.full_name || "Officer"}</span>
-          <RankBadge rank={profile.rank} />
+          <RankBadge rank={profile.rank} roleType={profile.role_type} roleLabel={profile.role_label} />
           <span className="subtle db-header__zone">
             Zone: {profile.assigned_zone?.trim() ? profile.assigned_zone : "Unassigned"}
           </span>

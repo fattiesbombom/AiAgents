@@ -1,6 +1,33 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { coerceStaffRoleType, parseCertisRank, securityOfficerNeedsDailyAssignment } from "../lib/api";
+import type { UserProfile } from "../lib/api";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
+
+function rowToProfile(row: Record<string, unknown>): UserProfile | null {
+  if (!row || typeof row.id !== "string") return null;
+  const ta = row.todays_assignment;
+  const todays_assignment = ta === "ground" || ta === "command_centre" ? ta : null;
+  const asg = row.assignment_set_at;
+  const role_type = coerceStaffRoleType(row.role_type);
+  const parsedRank = parseCertisRank(row.rank);
+  const rank = parsedRank ?? (role_type === "security_officer" ? "SO" : null);
+  return {
+    id: String(row.id),
+    role_type,
+    rank,
+    role_label: typeof row.role_label === "string" ? row.role_label : "Officer",
+    deployment_type:
+      row.deployment_type === "ground" || row.deployment_type === "command_centre"
+        ? row.deployment_type
+        : null,
+    todays_assignment,
+    assignment_set_at: typeof asg === "string" ? asg : null,
+    assigned_zone: typeof row.assigned_zone === "string" ? row.assigned_zone : null,
+    full_name: typeof row.full_name === "string" ? row.full_name : null,
+    badge_id: typeof row.badge_id === "string" ? row.badge_id : null,
+  };
+}
 
 function friendlyAuthError(message: string): string {
   const m = message.toLowerCase();
@@ -39,11 +66,20 @@ export function Login() {
         setError("Signed in but user session is missing.");
         return;
       }
-      const { data: prof } = await supabase.from("profiles").select("id").eq("id", uid).maybeSingle();
-      if (prof?.id) {
-        navigate("/dashboard", { replace: true });
-      } else {
+      const { data: profRow, error: profErr } = await supabase.from("profiles").select("*").eq("id", uid).maybeSingle();
+      if (profErr) {
+        setError(profErr.message);
+        return;
+      }
+      const profile = profRow && typeof profRow === "object" ? rowToProfile(profRow as Record<string, unknown>) : null;
+      if (!profile) {
         navigate("/onboarding", { replace: true, state: { pendingProfile: true } });
+        return;
+      }
+      if (securityOfficerNeedsDailyAssignment(profile)) {
+        navigate("/daily-assignment", { replace: true });
+      } else {
+        navigate("/dashboard", { replace: true });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign-in failed.");

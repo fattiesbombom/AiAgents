@@ -46,6 +46,8 @@ async def _supervisor_load_auth(state: IncidentState, raw: dict, user_id: Any) -
     auth_url = f"http://127.0.0.1:{settings.MCP_AUTH_DB_PORT}"
     if not user_id:
         state["responder_rank"] = None
+        state["role_type"] = None
+        state["todays_assignment"] = None
         state["responder_role_label"] = None
         state["responder_permissions"] = None
         state["can_approve_escalation"] = False
@@ -63,6 +65,16 @@ async def _supervisor_load_auth(state: IncidentState, raw: dict, user_id: Any) -
             rank_raw = role_info.get("rank")
             rank: CertisRank | None = rank_raw if isinstance(rank_raw, str) and rank_raw in _CERTIS_RANKS else None
             state["responder_rank"] = rank
+            rt = role_info.get("role_type")
+            if rt in ("security_officer", "auxiliary_police", "enforcement_officer"):
+                state["role_type"] = rt  # type: ignore[assignment]
+            else:
+                state["role_type"] = None
+            ta = role_info.get("todays_assignment")
+            if ta in ("ground", "command_centre"):
+                state["todays_assignment"] = ta  # type: ignore[assignment]
+            else:
+                state["todays_assignment"] = None
             rl = role_info.get("role_label")
             state["responder_role_label"] = rl if isinstance(rl, str) else None
             perms = role_info.get("permissions")

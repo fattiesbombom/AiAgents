@@ -49,6 +49,7 @@ export function CommandCentreDashboard({ profile, onLogout, logoutLoading }: Pro
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const zone = profile.assigned_zone?.trim() || "";
+  const ccRank = profile.rank ?? "SSO";
 
   const feedQ = useQuery({
     queryKey: ["dashboard", "cc", "incidents"],
@@ -97,14 +98,14 @@ export function CommandCentreDashboard({ profile, onLogout, logoutLoading }: Pro
   const auditQ = useQuery({
     queryKey: ["dashboard", "supervisor", "audit", selectedId],
     queryFn: () => fetchSupervisorAudit(selectedId!),
-    enabled: Boolean(selectedId) && isSupervisorRank(profile.rank),
+    enabled: Boolean(selectedId) && isSupervisorRank(ccRank),
     refetchInterval: REFETCH_MS,
   });
 
   const riskQ = useQuery({
     queryKey: ["dashboard", "supervisor", "risk"],
     queryFn: fetchSupervisorRiskPoints,
-    enabled: isSupervisorRank(profile.rank),
+    enabled: isSupervisorRank(ccRank),
     refetchInterval: REFETCH_MS,
   });
 
@@ -114,7 +115,7 @@ export function CommandCentreDashboard({ profile, onLogout, logoutLoading }: Pro
         incidentId: p.incidentId,
         status: p.status,
         reviewerId: profile.id,
-        reviewerRank: p.status === "approved" ? profile.rank : null,
+        reviewerRank: p.status === "approved" ? ccRank : null,
       }),
     onSuccess: (_, v) => {
       void qc.invalidateQueries({ queryKey: ["dashboard", "cc", "review-queue"] });
@@ -148,8 +149,8 @@ export function CommandCentreDashboard({ profile, onLogout, logoutLoading }: Pro
   }>;
   const sopChunks = sopQ.data?.sop_chunks ?? [];
 
-  const canApprove = canSccApproveReview(profile.rank);
-  const supervisor = isSupervisorRank(profile.rank);
+  const canApprove = canSccApproveReview(ccRank);
+  const supervisor = isSupervisorRank(ccRank);
 
   return (
     <main className="db-page">

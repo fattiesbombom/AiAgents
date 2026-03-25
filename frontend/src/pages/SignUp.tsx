@@ -3,9 +3,10 @@ import { Link, useNavigate } from "react-router-dom";
 import { RankSelector } from "../components/RankSelector";
 import type { CertisRank } from "../components/rankData";
 import { roleLabelForRank } from "../components/rankData";
+import type { StaffRoleType } from "../lib/api";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 
-type Step = 1 | 2 | 3;
+type Step = 1 | 2 | 3 | 4;
 
 function scorePassword(pw: string): 0 | 1 | 2 | 3 {
   if (!pw) return 0;
@@ -28,9 +29,32 @@ function friendlyAuthError(message: string): string {
   return message;
 }
 
+const ROLE_CARDS: {
+  id: StaffRoleType;
+  title: string;
+  description: string;
+}[] = [
+  {
+    id: "security_officer",
+    title: "Security Officer",
+    description: "Ranks SO to CSO · daily assignment required",
+  },
+  {
+    id: "auxiliary_police",
+    title: "Auxiliary Police Officer",
+    description: "Armed/unarmed · fixed ground role",
+  },
+  {
+    id: "enforcement_officer",
+    title: "Enforcement Officer",
+    description: "Island-wide operations · fixed ground role",
+  },
+];
+
 export function SignUp() {
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>(1);
+  const [roleType, setRoleType] = useState<StaffRoleType | null>(null);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -40,10 +64,12 @@ export function SignUp() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const isSecurityFlow = roleType === "security_officer";
+  const maxStep = isSecurityFlow ? 4 : 2;
   const pwScore = useMemo(() => scorePassword(password), [password]);
   const pwLabel = ["", "Weak", "Medium", "Strong"][pwScore];
 
-  const validateStep1 = () => {
+  const validatePersonal = () => {
     if (!fullName.trim()) {
       setError("Please enter your full name.");
       return false;
@@ -63,7 +89,7 @@ export function SignUp() {
     return true;
   };
 
-  const validateStep2 = () => {
+  const validateRank = () => {
     if (!rank) {
       setError("Please select your rank to continue.");
       return false;
@@ -71,7 +97,7 @@ export function SignUp() {
     return true;
   };
 
-  const validateStep3 = () => {
+  const validateDeployment = () => {
     if (!deployment) {
       setError("Please choose your deployment type.");
       return false;
@@ -81,19 +107,40 @@ export function SignUp() {
 
   const goNext = () => {
     setError(null);
-    if (step === 1 && validateStep1()) setStep(2);
-    else if (step === 2 && validateStep2()) setStep(3);
+    if (step === 1 && !roleType) {
+      setError("Please select a role type.");
+      return;
+    }
+    if (step === 1 && roleType) setStep(2);
+    else if (step === 2 && validatePersonal()) {
+      if (isSecurityFlow) setStep(3);
+      else void submitApoEo();
+    } else if (step === 3 && validateRank()) setStep(4);
   };
 
   const goBack = () => {
     setError(null);
     if (step === 2) setStep(1);
     else if (step === 3) setStep(2);
+    else if (step === 4) setStep(3);
   };
 
-  const submit = async () => {
-    setError(null);
-    if (!validateStep3() || !rank || !deployment) return;
+  const buildMetadataSecurity = () => {
+    if (!rank || !deployment) return null;
+    const roleLabel = roleLabelForRank(rank);
+    return {
+      full_name: fullName.trim(),
+      role_type: "security_officer" as const,
+      rank,
+      role_label: roleLabel,
+      deployment_type: deployment,
+      badge_id: badgeId.trim() || undefined,
+    };
+  };
+
+  const submitApoEo = async () => {
+    if (!roleType || roleType === "security_officer") return;
+    if (!validatePersonal()) return;
     if (!isSupabaseConfigured()) {
       setError("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.");
       return;
@@ -101,16 +148,16 @@ export function SignUp() {
 
     setLoading(true);
     try {
-      const roleLabel = roleLabelForRank(rank);
+      const role_label =
+        roleType === "auxiliary_police" ? "Auxiliary Police Officer" : "Enforcement Officer";
       const { data, error: signErr } = await supabase.auth.signUp({
         email: email.trim(),
         password,
         options: {
           data: {
             full_name: fullName.trim(),
-            rank,
-            role_label: roleLabel,
-            deployment_type: deployment,
+            role_type: roleType,
+            role_label,
             badge_id: badgeId.trim() || undefined,
           },
         },
@@ -145,9 +192,73 @@ export function SignUp() {
           replace: true,
           state: {
             fullName: fullName.trim(),
+            roleLabel: role_label,
+            roleType,
+            pendingProfile: true,
+          },
+        });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitSecurity = async () => {
+    setError(null);
+    if (!validateDeployment() || !rank || !deployment) return;
+    if (!isSupabaseConfigured()) {
+      setError("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.");
+      return;
+    }
+
+    const meta = buildMetadataSecurity();
+    if (!meta) return;
+
+    setLoading(true);
+    try {
+      const { data, error: signErr } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: { data: meta },
+      });
+
+      if (signErr) {
+        setError(friendlyAuthError(signErr.message));
+        setLoading(false);
+        return;
+      }
+
+      if (!data.user?.id) {
+        setError("Sign-up did not return a user. Check email confirmation settings in Supabase.");
+        setLoading(false);
+        return;
+      }
+
+      const { data: prof, error: profErr } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("id", data.user.id)
+        .maybeSingle();
+
+      if (profErr) {
+        console.warn("Profile fetch after sign-up:", profErr.message);
+      }
+
+      const roleLabel = roleLabelForRank(rank);
+
+      if (prof?.id) {
+        navigate("/dashboard", { replace: true });
+      } else {
+        navigate("/onboarding", {
+          replace: true,
+          state: {
+            fullName: fullName.trim(),
             roleLabel,
             rank,
             deploymentType: deployment,
+            roleType: "security_officer",
             pendingProfile: true,
           },
         });
@@ -188,22 +299,47 @@ export function SignUp() {
         </div>
 
         <div className="step-indicator">
-          <span className={step >= 1 ? "step-indicator__dot step-indicator__dot--on" : "step-indicator__dot"}>
-            1
-          </span>
-          <span className="step-indicator__line" />
-          <span className={step >= 2 ? "step-indicator__dot step-indicator__dot--on" : "step-indicator__dot"}>
-            2
-          </span>
-          <span className="step-indicator__line" />
-          <span className={step >= 3 ? "step-indicator__dot step-indicator__dot--on" : "step-indicator__dot"}>
-            3
-          </span>
+          {Array.from({ length: maxStep }, (_, i) => i + 1).map((n, idx) => (
+            <span key={n}>
+              {idx > 0 && <span className="step-indicator__line" />}
+              <span className={step >= n ? "step-indicator__dot step-indicator__dot--on" : "step-indicator__dot"}>
+                {n}
+              </span>
+            </span>
+          ))}
         </div>
 
         {error && <p className="error">{error}</p>}
 
         {step === 1 && (
+          <div className="auth-step">
+            <h2 className="auth-step__title">Role type</h2>
+            <p className="subtle auth-step__hint">Choose the category that matches your posting.</p>
+            <div className="deploy-options deploy-options--three">
+              {ROLE_CARDS.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className={`deploy-card deploy-card--button ${roleType === c.id ? "deploy-card--selected" : ""}`}
+                  onClick={() => {
+                    setRoleType(c.id);
+                    setError(null);
+                  }}
+                >
+                  <span className="deploy-card__title">{c.title}</span>
+                  <span className="deploy-card__desc">{c.description}</span>
+                </button>
+              ))}
+            </div>
+            <div className="auth-actions">
+              <button type="button" className="btn btn-primary" onClick={goNext}>
+                Continue
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
           <div className="auth-step">
             <h2 className="auth-step__title">Personal details</h2>
             <label className="label" htmlFor="su-name">
@@ -257,14 +393,22 @@ export function SignUp() {
               autoComplete="off"
             />
             <div className="auth-actions">
-              <button type="button" className="btn btn-primary" onClick={goNext}>
-                Continue
+              <button type="button" className="btn btn-ghost" onClick={goBack}>
+                Back
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={loading}
+                onClick={() => void goNext()}
+              >
+                {isSecurityFlow ? "Continue" : loading ? "Creating account…" : "Create account"}
               </button>
             </div>
           </div>
         )}
 
-        {step === 2 && (
+        {step === 3 && isSecurityFlow && (
           <div className="auth-step">
             <h2 className="auth-step__title">Select your rank</h2>
             <p className="subtle auth-step__hint">
@@ -283,14 +427,12 @@ export function SignUp() {
           </div>
         )}
 
-        {step === 3 && (
+        {step === 4 && isSecurityFlow && (
           <div className="auth-step">
             <h2 className="auth-step__title">Deployment</h2>
             <p className="subtle auth-step__hint">Where are you primarily deployed?</p>
             <div className="deploy-options">
-              <label
-                className={`deploy-card ${deployment === "ground" ? "deploy-card--selected" : ""}`}
-              >
+              <label className={`deploy-card ${deployment === "ground" ? "deploy-card--selected" : ""}`}>
                 <input
                   type="radio"
                   name="deploy"
@@ -300,9 +442,7 @@ export function SignUp() {
                 <span className="deploy-card__title">Ground officer</span>
                 <span className="deploy-card__desc">On patrol, site presence, and field response</span>
               </label>
-              <label
-                className={`deploy-card ${deployment === "command_centre" ? "deploy-card--selected" : ""}`}
-              >
+              <label className={`deploy-card ${deployment === "command_centre" ? "deploy-card--selected" : ""}`}>
                 <input
                   type="radio"
                   name="deploy"
@@ -317,7 +457,7 @@ export function SignUp() {
               <button type="button" className="btn btn-ghost" onClick={goBack}>
                 Back
               </button>
-              <button type="button" className="btn btn-accent" disabled={loading} onClick={submit}>
+              <button type="button" className="btn btn-accent" disabled={loading} onClick={() => void submitSecurity()}>
                 {loading ? "Creating account…" : "Create account"}
               </button>
             </div>

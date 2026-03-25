@@ -37,6 +37,7 @@ IncidentStatus = Literal["open", "escalated", "closed", "rejected"]
 
 CertisRank = Literal["SO", "SSO", "SS", "SSS", "CSO"]
 DeploymentType = Literal["ground", "command_centre"]
+StaffRoleType = Literal["security_officer", "auxiliary_police", "enforcement_officer"]
 
 TaskMode = Literal["routine", "non_routine"]
 RoutineTaskType = Literal[
@@ -114,6 +115,8 @@ class IncidentState(TypedDict):
     incident_type: IncidentType
     priority: Priority
     responder_rank: CertisRank | None
+    role_type: StaffRoleType | None
+    todays_assignment: Literal["ground", "command_centre"] | None
     responder_role_label: str | None
     responder_permissions: list[str] | None
     can_approve_escalation: bool
@@ -246,6 +249,8 @@ def create_incident_state(trigger_event: dict) -> IncidentState:
         incident_type="other",
         priority="low",
         responder_rank=None,
+        role_type=None,
+        todays_assignment=None,
         responder_role_label=None,
         responder_permissions=None,
         can_approve_escalation=False,

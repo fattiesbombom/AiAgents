@@ -2,6 +2,19 @@ export type HumanReviewStatus = "pending" | "approved" | "rejected" | null;
 
 export type CertisRank = "SO" | "SSO" | "SS" | "SSS" | "CSO";
 
+export type StaffRoleType = "security_officer" | "auxiliary_police" | "enforcement_officer";
+
+const CERTIS_RANKS: CertisRank[] = ["SO", "SSO", "SS", "SSS", "CSO"];
+
+export function parseCertisRank(raw: unknown): CertisRank | null {
+  return typeof raw === "string" && CERTIS_RANKS.includes(raw as CertisRank) ? (raw as CertisRank) : null;
+}
+
+export function coerceStaffRoleType(raw: unknown): StaffRoleType {
+  if (raw === "auxiliary_police" || raw === "enforcement_officer") return raw;
+  return "security_officer";
+}
+
 export type IncidentSourceType =
   | "body_worn"
   | "cctv"
@@ -58,13 +71,36 @@ async function parseJson<T>(res: Response): Promise<T> {
 
 export type UserProfile = {
   id: string;
-  rank: CertisRank;
+  role_type: StaffRoleType;
+  rank: CertisRank | null;
   role_label: string;
-  deployment_type: "ground" | "command_centre";
+  deployment_type: "ground" | "command_centre" | null;
+  todays_assignment: "ground" | "command_centre" | null;
+  assignment_set_at: string | null;
   assigned_zone: string | null;
   full_name: string | null;
   badge_id?: string | null;
 };
+
+/** Which dashboard shell to show (ground vs SCC). */
+export function effectiveDashboardView(profile: UserProfile): "ground" | "command_centre" {
+  if (profile.role_type === "auxiliary_police" || profile.role_type === "enforcement_officer") {
+    return "ground";
+  }
+  return profile.todays_assignment === "command_centre" ? "command_centre" : "ground";
+}
+
+export function assignmentTimestampIsToday(iso: string | null | undefined): boolean {
+  if (!iso) return false;
+  return new Date(iso).toDateString() === new Date().toDateString();
+}
+
+/** Security officers must confirm ground vs command centre when not set for this calendar day. */
+export function securityOfficerNeedsDailyAssignment(profile: UserProfile): boolean {
+  if (profile.role_type !== "security_officer") return false;
+  if (!assignmentTimestampIsToday(profile.assignment_set_at)) return true;
+  return profile.todays_assignment !== "ground" && profile.todays_assignment !== "command_centre";
+}
 
 export type DispatchPanelRow = {
   id: string;

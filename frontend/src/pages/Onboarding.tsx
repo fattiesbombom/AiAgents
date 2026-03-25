@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import type { StaffRoleType } from "../lib/api";
+import { coerceStaffRoleType } from "../lib/api";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 
 type LocationState = {
@@ -7,6 +9,7 @@ type LocationState = {
   roleLabel?: string;
   rank?: string;
   deploymentType?: string;
+  roleType?: StaffRoleType;
   pendingProfile?: boolean;
 };
 
@@ -30,6 +33,7 @@ export function Onboarding() {
   const [roleLabel, setRoleLabel] = useState(initial.roleLabel ?? "");
   const [rank, setRank] = useState(initial.rank ?? "");
   const [deploymentType, setDeploymentType] = useState(initial.deploymentType ?? "");
+  const [roleType, setRoleType] = useState<StaffRoleType | undefined>(initial.roleType);
   const [pendingProfile] = useState(Boolean(initial.pendingProfile));
   const [loading, setLoading] = useState(true);
 
@@ -57,15 +61,20 @@ export function Onboarding() {
       setDeploymentType((prev) =>
         prev || (typeof meta.deployment_type === "string" ? meta.deployment_type : ""),
       );
+      setRoleType((prev) =>
+        prev ?? (typeof meta.role_type === "string" ? coerceStaffRoleType(meta.role_type) : undefined),
+      );
 
       const { data: prof } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
-      if (!cancelled && prof) {
-        setFullName((prev) => prev || (typeof prof.full_name === "string" ? prof.full_name : ""));
-        setRoleLabel((prev) => prev || (typeof prof.role_label === "string" ? prof.role_label : ""));
-        setRank((prev) => prev || (typeof prof.rank === "string" ? prof.rank : ""));
+      if (!cancelled && prof && typeof prof === "object") {
+        const p = prof as Record<string, unknown>;
+        setFullName((prev) => prev || (typeof p.full_name === "string" ? p.full_name : ""));
+        setRoleLabel((prev) => prev || (typeof p.role_label === "string" ? p.role_label : ""));
+        setRank((prev) => prev || (typeof p.rank === "string" ? p.rank : ""));
         setDeploymentType((prev) =>
-          prev || (typeof prof.deployment_type === "string" ? prof.deployment_type : ""),
+          prev || (typeof p.deployment_type === "string" ? p.deployment_type : ""),
         );
+        setRoleType((prev) => prev ?? coerceStaffRoleType(p.role_type));
       }
       if (!cancelled) setLoading(false);
     })();
@@ -75,6 +84,7 @@ export function Onboarding() {
   }, [navigate]);
 
   const displayName = fullName || "officer";
+  const rt = roleType ?? "security_officer";
 
   if (loading) {
     return (
@@ -94,17 +104,42 @@ export function Onboarding() {
           <span className="certis-brand__sub">Welcome</span>
         </div>
         <h1 className="onboard-title">Welcome, {displayName}</h1>
-        <p className="onboard-line">
-          You are registered as <strong>{roleLabel || "Security Officer"}</strong>
-          {rank ? ` (${rank})` : ""}.
-        </p>
-        {deploymentType && (
+
+        {rt === "security_officer" && (
+          <>
+            <p className="onboard-line">
+              You are registered as <strong>{roleLabel || "Security Officer"}</strong>
+              {rank ? ` (${rank})` : ""}.
+            </p>
+            <p className="onboard-body">
+              Each morning you will pick your assignment before starting your shift.
+            </p>
+          </>
+        )}
+
+        {rt === "auxiliary_police" && (
+          <p className="onboard-body">
+            You are registered as an Auxiliary Police Officer. You will always be assigned to ground operations.
+          </p>
+        )}
+
+        {rt === "enforcement_officer" && (
+          <p className="onboard-body">
+            You are registered as an Enforcement Officer. You will always be assigned to ground operations.
+          </p>
+        )}
+
+        {rt === "security_officer" && deploymentType && (
           <p className="subtle">
-            Deployment:{" "}
+            Default deployment:{" "}
             {deploymentType === "command_centre" ? "Command centre (SCC / FCC)" : "Ground (patrol / site)"}
           </p>
         )}
-        <p className="onboard-body">{dashboardBlurb(rank, deploymentType)}</p>
+
+        {rt === "security_officer" && (
+          <p className="onboard-body subtle">{dashboardBlurb(rank, deploymentType)}</p>
+        )}
+
         {pendingProfile && (
           <p className="ok">
             Your profile row is being created. If anything looks wrong, refresh this page in a few seconds.

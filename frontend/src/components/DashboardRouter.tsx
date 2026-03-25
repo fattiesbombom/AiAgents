@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useUserProfile } from "../hooks/useUserProfile";
+import { effectiveDashboardView, securityOfficerNeedsDailyAssignment } from "../lib/api";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 import { LoadingSpinner } from "./LoadingSpinner";
 
@@ -61,6 +62,39 @@ function DashboardRouterInner() {
     );
   }
 
+  if (profile.role_type === "auxiliary_police" || profile.role_type === "enforcement_officer") {
+    return (
+      <Suspense
+        fallback={
+          <main className="container db-router-loading">
+            <LoadingSpinner label="Loading dashboard…" />
+          </main>
+        }
+      >
+        <GroundOfficerDashboard profile={profile} onLogout={onLogout} logoutLoading={logoutBusy} />
+      </Suspense>
+    );
+  }
+
+  if (profile.role_type === "security_officer" && securityOfficerNeedsDailyAssignment(profile)) {
+    return <Navigate to="/daily-assignment" replace />;
+  }
+
+  const view = effectiveDashboardView(profile);
+  if (view === "command_centre") {
+    return (
+      <Suspense
+        fallback={
+          <main className="container db-router-loading">
+            <LoadingSpinner label="Loading dashboard…" />
+          </main>
+        }
+      >
+        <CommandCentreDashboard profile={profile} onLogout={onLogout} logoutLoading={logoutBusy} />
+      </Suspense>
+    );
+  }
+
   const dash = (
     <Suspense
       fallback={
@@ -69,13 +103,7 @@ function DashboardRouterInner() {
         </main>
       }
     >
-      {profile.deployment_type === "ground" ? (
-        <GroundOfficerDashboard profile={profile} onLogout={onLogout} logoutLoading={logoutBusy} />
-      ) : profile.deployment_type === "command_centre" ? (
-        <CommandCentreDashboard profile={profile} onLogout={onLogout} logoutLoading={logoutBusy} />
-      ) : (
-        <Navigate to="/login" replace />
-      )}
+      <GroundOfficerDashboard profile={profile} onLogout={onLogout} logoutLoading={logoutBusy} />
     </Suspense>
   );
 

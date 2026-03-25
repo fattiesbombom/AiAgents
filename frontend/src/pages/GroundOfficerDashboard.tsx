@@ -23,26 +23,27 @@ type Props = {
 export function GroundOfficerDashboard({ profile, onLogout, logoutLoading }: Props) {
   const qc = useQueryClient();
   const zone = profile.assigned_zone?.trim() || null;
+  const rankKey = profile.rank ?? "SO";
   const [manualLoc, setManualLoc] = useState("");
   const [manualHint, setManualHint] = useState("");
   const [manualDesc, setManualDesc] = useState("");
   const [manualOk, setManualOk] = useState<string | null>(null);
 
   const incidentsQ = useQuery({
-    queryKey: ["dashboard", "ground", "incidents", profile.rank, zone],
-    queryFn: () => fetchGroundIncidents(profile.rank, zone),
+    queryKey: ["dashboard", "ground", "incidents", rankKey, zone],
+    queryFn: () => fetchGroundIncidents(rankKey, zone),
     refetchInterval: REFETCH_MS,
   });
 
   const dispatchesQ = useQuery({
-    queryKey: ["dashboard", "ground", "dispatches", profile.rank],
-    queryFn: () => fetchGroundDispatches(profile.rank),
+    queryKey: ["dashboard", "ground", "dispatches", rankKey],
+    queryFn: () => fetchGroundDispatches(rankKey),
     refetchInterval: REFETCH_MS,
   });
 
   const taskQ = useQuery({
-    queryKey: ["dashboard", "ground", "task", profile.rank, zone],
-    queryFn: () => fetchOfficerTodayTask(profile.rank, zone),
+    queryKey: ["dashboard", "ground", "task", rankKey, zone],
+    queryFn: () => fetchOfficerTodayTask(rankKey, zone),
     refetchInterval: REFETCH_MS,
   });
 

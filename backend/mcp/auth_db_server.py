@@ -20,6 +20,7 @@ mcp = FastMCP("auth-db", host="127.0.0.1", port=settings.MCP_AUTH_DB_PORT)
 
 CertisRank = Literal["SO", "SSO", "SS", "SSS", "CSO"]
 DeploymentType = Literal["ground", "command_centre"]
+StaffRoleType = Literal["security_officer", "auxiliary_police", "enforcement_officer"]
 
 RANK_PERMISSIONS: dict[CertisRank, list[str]] = {
     "SO": ["respond_incident", "view_own_tasks", "submit_report"],
@@ -94,6 +95,26 @@ def _can_approve_escalation(rank: CertisRank) -> bool:
 
 def _can_operate_scc(rank: CertisRank) -> bool:
     return rank in ("SSO", "SS", "SSS", "CSO")
+
+
+def _coerce_role_type(raw: object) -> StaffRoleType:
+    if isinstance(raw, str):
+        u = raw.strip().lower()
+        if u in ("security_officer", "auxiliary_police", "enforcement_officer"):
+            return u  # type: ignore[return-value]
+    return "security_officer"
+
+
+def _get_permissions(profile: dict[str, Any]) -> list[str]:
+    role_type = _coerce_role_type(profile.get("role_type"))
+    if role_type == "auxiliary_police":
+        return ["respond_incident", "view_own_tasks", "submit_report", "armed_response"]
+    if role_type == "enforcement_officer":
+        return ["respond_incident", "view_own_tasks", "submit_report", "enforcement_action"]
+    rank = profile.get("rank")
+    if isinstance(rank, str) and rank in RANK_PERMISSIONS:
+        return list(RANK_PERMISSIONS[rank])  # type: ignore[index]
+    return []
 
 
 def _supabase_url() -> str:
@@ -185,6 +206,7 @@ async def get_user_role(user_id: str) -> dict:
         if auth_r.status_code != 200:
             return {
                 "role": None,
+                "role_type": None,
                 "rank": None,
                 "role_label": None,
                 "permissions": None,
@@ -192,6 +214,8 @@ async def get_user_role(user_id: str) -> dict:
                 "can_operate_scc": False,
                 "assigned_zone": None,
                 "deployment_type": None,
+                "todays_assignment": None,
+                "assignment_set_at": None,
                 "badge_id": None,
                 "organisation": None,
             }
@@ -204,30 +228,78 @@ async def get_user_role(user_id: str) -> dict:
         profile = await _fetch_profile_row(client, url, service_key, user_id)
 
         if profile:
-            rank = _rank_from_profile_row(profile)
-            if rank is None:
+            role_type = _coerce_role_type(profile.get("role_type"))
+            rank = _rank_from_profile_row(profile) if role_type == "security_officer" else None
+            if role_type == "security_officer" and rank is None:
                 rank = "SO"
             role_label = profile.get("role_label")
             if not isinstance(role_label, str) or not role_label.strip():
-                role_label = RANK_LABELS[rank]
-            dt_raw = profile.get("deployment_type")
-            if dt_raw in ("ground", "command_centre"):
-                deployment_type: DeploymentType = dt_raw  # type: ignore[assignment]
+                role_label = RANK_LABELS[rank] if rank else "Officer"
+
+            ta_raw = profile.get("todays_assignment")
+            todays_assignment: str | None = ta_raw if ta_raw in ("ground", "command_centre") else None
+            assignment_set_at = profile.get("assignment_set_at")
+            assignment_set_at_str = assignment_set_at if isinstance(assignment_set_at, str) else None
+
+            if role_type in ("auxiliary_police", "enforcement_officer"):
+                deployment_type: DeploymentType = "ground"
             else:
-                deployment_type = _default_deployment(rank)
+                merged = profile.get("todays_assignment") or profile.get("deployment_type")
+                if merged in ("ground", "command_centre"):
+                    deployment_type = merged  # type: ignore[assignment]
+                elif rank:
+                    deployment_type = _default_deployment(rank)
+                else:
+                    deployment_type = "ground"
+
             assigned_zone = profile.get("assigned_zone")
             badge_id = profile.get("badge_id")
-            perms = list(RANK_PERMISSIONS[rank])
+            perm_profile = {**profile, "role_type": role_type, "rank": rank}
+            perms = _get_permissions(perm_profile)
+            rk = rank
             return {
                 "role": legacy_role,
+                "role_type": role_type,
                 "rank": rank,
                 "role_label": role_label,
                 "permissions": perms,
-                "can_approve_escalation": _can_approve_escalation(rank),
-                "can_operate_scc": _can_operate_scc(rank),
+                "can_approve_escalation": rk in ("SS", "SSS", "CSO") if rk else False,
+                "can_operate_scc": rk in ("SSO", "SS", "SSS", "CSO") if rk else False,
                 "assigned_zone": assigned_zone if isinstance(assigned_zone, str) else None,
                 "deployment_type": deployment_type,
+                "todays_assignment": todays_assignment,
+                "assignment_set_at": assignment_set_at_str,
                 "badge_id": badge_id if isinstance(badge_id, str) else None,
+                "organisation": organisation,
+            }
+
+        rt_fb = _coerce_role_type(meta.get("role_type")) if isinstance(meta, dict) else "security_officer"
+
+        if rt_fb in ("auxiliary_police", "enforcement_officer"):
+            rl = meta.get("role_label") if isinstance(meta, dict) else None
+            role_label_apo = (
+                rl
+                if isinstance(rl, str) and rl.strip()
+                else (
+                    "Auxiliary Police Officer"
+                    if rt_fb == "auxiliary_police"
+                    else "Enforcement Officer"
+                )
+            )
+            perm_apo = _get_permissions({"role_type": rt_fb, "rank": None})
+            return {
+                "role": legacy_role,
+                "role_type": rt_fb,
+                "rank": None,
+                "role_label": role_label_apo,
+                "permissions": perm_apo,
+                "can_approve_escalation": False,
+                "can_operate_scc": False,
+                "assigned_zone": meta.get("assigned_zone") if isinstance(meta, dict) else None,
+                "deployment_type": "ground",
+                "todays_assignment": None,
+                "assignment_set_at": None,
+                "badge_id": meta.get("badge_id") if isinstance(meta.get("badge_id"), str) else None,
                 "organisation": organisation,
             }
 
@@ -236,6 +308,7 @@ async def get_user_role(user_id: str) -> dict:
         if rank is None:
             return {
                 "role": legacy_role,
+                "role_type": None,
                 "rank": None,
                 "role_label": None,
                 "permissions": None,
@@ -243,6 +316,8 @@ async def get_user_role(user_id: str) -> dict:
                 "can_operate_scc": False,
                 "assigned_zone": meta.get("assigned_zone") if isinstance(meta, dict) else None,
                 "deployment_type": None,
+                "todays_assignment": None,
+                "assignment_set_at": None,
                 "badge_id": None,
                 "organisation": organisation,
             }
@@ -253,17 +328,20 @@ async def get_user_role(user_id: str) -> dict:
         else:
             deployment_type_fb = _default_deployment(rank)
 
-        perms = list(RANK_PERMISSIONS[rank])
+        perms_so = list(RANK_PERMISSIONS[rank])
 
         return {
             "role": legacy_role,
+            "role_type": "security_officer",
             "rank": rank,
             "role_label": RANK_LABELS[rank],
-            "permissions": perms,
+            "permissions": perms_so,
             "can_approve_escalation": _can_approve_escalation(rank),
             "can_operate_scc": _can_operate_scc(rank),
             "assigned_zone": meta.get("assigned_zone") if isinstance(meta, dict) else None,
             "deployment_type": deployment_type_fb,
+            "todays_assignment": None,
+            "assignment_set_at": None,
             "badge_id": meta.get("badge_id") if isinstance(meta.get("badge_id"), str) else None,
             "organisation": organisation,
         }

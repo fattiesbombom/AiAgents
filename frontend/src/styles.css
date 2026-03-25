@@ -286,6 +286,23 @@ body {
   }
 }
 
+.deploy-options--three {
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 840px) {
+  .deploy-options--three {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+}
+
+.deploy-card--button {
+  padding: 14px 16px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
 .deploy-card {
   display: flex;
   flex-direction: column;
