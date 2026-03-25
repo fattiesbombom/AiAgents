@@ -2,11 +2,13 @@ import { useState } from "react";
 import { useIncident } from "../hooks/useIncident";
 import { HumanReviewPanel } from "../components/HumanReviewPanel";
 import { IncidentDetails } from "../components/IncidentDetails";
+import type { CertisRank } from "../lib/api";
 
 export function DashboardPage() {
   const [incidentIdInput, setIncidentIdInput] = useState("");
   const [incidentId, setIncidentId] = useState("");
   const [reviewerId, setReviewerId] = useState("");
+  const [reviewerRank, setReviewerRank] = useState<CertisRank | "">("");
   const query = useIncident(incidentId);
 
   return (
@@ -34,7 +36,13 @@ export function DashboardPage() {
 
       {query.data && (
         <>
-          <HumanReviewPanel incident={query.data} reviewerId={reviewerId} onReviewerIdChange={setReviewerId} />
+          <HumanReviewPanel
+            incident={query.data}
+            reviewerId={reviewerId}
+            onReviewerIdChange={setReviewerId}
+            reviewerRank={reviewerRank}
+            onReviewerRankChange={setReviewerRank}
+          />
           <IncidentDetails incident={query.data} />
         </>
       )}

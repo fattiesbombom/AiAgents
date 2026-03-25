@@ -25,3 +25,6 @@ pyjwt[crypto]
 cryptography
 
 mcp
+
+# SOP PDF ingestion (backend.scripts.ingest_sop_pdf)
+pypdf

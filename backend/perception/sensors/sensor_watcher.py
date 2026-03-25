@@ -1,9 +1,8 @@
-"""Sensor watcher for non-video sources (alarms/logs).
+"""Sensor watchers for non-video and integration sources.
 
-Supports polling:
-- SQLite database file
-- JSON file
-- HTTP endpoint returning JSON
+Polls SQLite / JSON / HTTP and posts full trigger payloads to ``/trigger``.
+
+Also includes dedicated watchers for MOP reports, C2-style feeds, and intercom lines.
 """
 
 from __future__ import annotations
@@ -23,6 +22,17 @@ from backend.config import settings
 
 
 SourceKind = Literal["sqlite", "json_file", "webhook"]
+
+
+def post_trigger_to_api(client: httpx.Client, event: dict[str, Any]) -> None:
+    try:
+        client.post(
+            f"http://{settings.API_HOST}:{settings.API_PORT}/trigger",
+            json=event,
+            timeout=10.0,
+        )
+    except Exception:
+        pass
 
 
 @dataclass(frozen=True)
@@ -73,7 +83,6 @@ class SensorWatcher:
                         for ev in events:
                             self._handle_event(src, ev, client)
                     except Exception:
-                        # Best-effort; continue watching other sources.
                         continue
                 time.sleep(self.poll_interval_seconds)
         finally:
@@ -164,29 +173,309 @@ class SensorWatcher:
                 events.append({"id": str(ev.get("id", i)), "event_type": ev.get("event_type"), "payload": ev})
         return events
 
+    def _map_alarm_to_source_type(self, etype: str, payload: dict[str, Any]) -> str:
+        et = etype.lower()
+        if et == "alarm_event":
+            at = str(payload.get("alarm_type") or payload.get("type") or "").lower()
+            if "fire" in at:
+                return "fire_alarm"
+            if "lift" in at:
+                return "lift_alarm"
+            if "door" in at or "access" in at or "forced" in at:
+                return "door_alarm"
+            if "nursing" in at:
+                return "nursing_intercom"
+            if "carpark" in at or "car_park" in at:
+                return "carpark_intercom"
+            return "intruder_alarm"
+        if et in ("forced_door", "door_forced"):
+            return "door_alarm"
+        if et == "intruder":
+            return "intruder_alarm"
+        if et == "fire":
+            return "fire_alarm"
+        return "intruder_alarm"
+
     def _handle_event(self, src: SensorSource, ev: dict[str, Any], client: httpx.Client) -> None:
         etype = str(ev.get("event_type") or "").lower()
         payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
 
-        # Only trigger on alarm/forced door style events.
         if etype not in ("alarm_event", "forced_door", "door_forced", "intruder", "fire"):
             return
 
+        mapped = self._map_alarm_to_source_type(etype, payload)
         hint = payload.get("alarm_type") or payload.get("incident_type_hint") or etype
+        source_label = payload.get("source_label") if isinstance(payload.get("source_label"), str) else None
+        if not source_label:
+            source_label = f"{src.location} ({etype})"
 
         trigger_event: dict[str, Any] = {
             "source_id": src.source_id,
             "feed_source": "remote",
-            "source_type": "non_video",
+            "source_type": mapped,
+            "source_label": source_label,
             "incident_type_hint": str(hint) if hint is not None else None,
-            "location": payload.get("zone") or src.location,
+            "location": str(payload.get("zone") or src.location),
             "timestamp": datetime.now(UTC).isoformat(),
             "evidence_refs": payload.get("evidence_refs") if isinstance(payload.get("evidence_refs"), list) else [],
             "confidence_score": float(payload.get("confidence_score") or 0.5),
         }
+        post_trigger_to_api(client, trigger_event)
 
+
+IntercomKind = Literal["lift_alarm", "nursing_intercom", "carpark_intercom"]
+
+
+@dataclass(frozen=True)
+class MOPSource:
+    """Webhook that returns JSON list of tip-off objects."""
+
+    source_id: str
+    webhook_url: str
+    location: str
+    default_label: str = "Member of Public report"
+
+
+@dataclass(frozen=True)
+class C2FeedSource:
+    """HTTP endpoint returning JSON list of C2-style alert dicts."""
+
+    source_id: str
+    feed_url: str
+    location: str
+
+
+@dataclass(frozen=True)
+class IntercomSource:
+    """Webhook returning JSON list of intercom activation events."""
+
+    source_id: str
+    webhook_url: str
+    location: str
+    intercom_kind: IntercomKind
+
+
+class MOPWatcher:
+    """Polls an app/webhook endpoint for member-of-public reports."""
+
+    def __init__(self, sources: list[MOPSource], poll_interval_seconds: float = 5.0):
+        self.sources = sources
+        self.poll_interval_seconds = float(poll_interval_seconds)
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._seen_ids: dict[str, set[str]] = {}
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, name="MOPWatcher", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+        self._thread = None
+
+    def _loop(self) -> None:
+        client = httpx.Client(timeout=15.0)
         try:
-            client.post(f"http://{settings.API_HOST}:{settings.API_PORT}/trigger", json=trigger_event)
-        except Exception:
-            pass
+            while self._running:
+                for src in self.sources:
+                    try:
+                        self._poll_mop(src, client)
+                    except Exception:
+                        continue
+                time.sleep(self.poll_interval_seconds)
+        finally:
+            client.close()
 
+    def _poll_mop(self, src: MOPSource, client: httpx.Client) -> None:
+        r = client.get(src.webhook_url)
+        if r.status_code != 200:
+            return
+        data = r.json()
+        if isinstance(data, dict):
+            data = [data]
+        if not isinstance(data, list):
+            return
+        seen = self._seen_ids.setdefault(src.source_id, set())
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            rid = str(item.get("id", ""))
+            if not rid or rid in seen:
+                continue
+            if len(seen) > 2000:
+                seen.clear()
+            seen.add(rid)
+            method = str(item.get("report_method") or "app")
+            label = item.get("source_label") if isinstance(item.get("source_label"), str) else src.default_label
+            trigger_event = {
+                "source_id": src.source_id,
+                "feed_source": "remote",
+                "source_type": "mop_report",
+                "source_label": label,
+                "incident_type_hint": item.get("description") or "mop_report",
+                "location": str(item.get("location") or src.location),
+                "timestamp": str(item.get("timestamp") or datetime.now(UTC).isoformat()),
+                "evidence_refs": item.get("evidence_refs") if isinstance(item.get("evidence_refs"), list) else [],
+                "confidence_score": float(item.get("confidence_score") or 0.6),
+                "report_method": method,
+            }
+            post_trigger_to_api(client, trigger_event)
+
+
+class C2SystemWatcher:
+    """Polls a C2-style JSON feed (HTTP); each item becomes a ``c2_system`` trigger."""
+
+    def __init__(self, sources: list[C2FeedSource], poll_interval_seconds: float = 3.0):
+        self.sources = sources
+        self.poll_interval_seconds = float(poll_interval_seconds)
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._seen_ids: dict[str, set[str]] = {}
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, name="C2SystemWatcher", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+        self._thread = None
+
+    def _loop(self) -> None:
+        client = httpx.Client(timeout=20.0)
+        try:
+            while self._running:
+                for src in self.sources:
+                    try:
+                        self._poll_c2(src, client)
+                    except Exception:
+                        continue
+                time.sleep(self.poll_interval_seconds)
+        finally:
+            client.close()
+
+    def _poll_c2(self, src: C2FeedSource, client: httpx.Client) -> None:
+        r = client.get(src.feed_url)
+        if r.status_code != 200:
+            return
+        data = r.json()
+        if isinstance(data, dict):
+            data = [data]
+        if not isinstance(data, list):
+            return
+        seen = self._seen_ids.setdefault(src.source_id, set())
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            rid = str(item.get("id") or item.get("alert_id") or "")
+            if not rid:
+                rid = json.dumps(item, sort_keys=True)[:128]
+            if rid in seen:
+                continue
+            if len(seen) > 2000:
+                seen.clear()
+            seen.add(rid)
+            code = str(item.get("alert_code") or item.get("code") or "C2")
+            zone = str(item.get("zone") or item.get("location") or src.location)
+            sev = item.get("severity")
+            label = item.get("source_label") if isinstance(item.get("source_label"), str) else f"C2 {code} @ {zone}"
+            trigger_event = {
+                "source_id": src.source_id,
+                "feed_source": "remote",
+                "source_type": "c2_system",
+                "source_label": label,
+                "incident_type_hint": code,
+                "location": zone,
+                "timestamp": str(item.get("timestamp") or datetime.now(UTC).isoformat()),
+                "evidence_refs": item.get("evidence_refs") if isinstance(item.get("evidence_refs"), list) else [],
+                "confidence_score": float(item.get("confidence_score") or 0.75),
+                "severity": str(sev) if sev is not None else None,
+                "c2_payload": item,
+            }
+            post_trigger_to_api(client, trigger_event)
+
+
+class IntercomWatcher:
+    """Listens (polls) for lift / nursing / carpark intercom activation events."""
+
+    def __init__(self, sources: list[IntercomSource], poll_interval_seconds: float = 2.0):
+        self.sources = sources
+        self.poll_interval_seconds = float(poll_interval_seconds)
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._seen_ids: dict[str, set[str]] = {}
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, name="IntercomWatcher", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+        self._thread = None
+
+    def _loop(self) -> None:
+        client = httpx.Client(timeout=15.0)
+        try:
+            while self._running:
+                for src in self.sources:
+                    try:
+                        self._poll_intercom(src, client)
+                    except Exception:
+                        continue
+                time.sleep(self.poll_interval_seconds)
+        finally:
+            client.close()
+
+    def _poll_intercom(self, src: IntercomSource, client: httpx.Client) -> None:
+        r = client.get(src.webhook_url)
+        if r.status_code != 200:
+            return
+        data = r.json()
+        if isinstance(data, dict):
+            data = [data]
+        if not isinstance(data, list):
+            return
+        seen = self._seen_ids.setdefault(src.source_id, set())
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            rid = str(item.get("id") or item.get("event_id") or "")
+            if not rid or rid in seen:
+                continue
+            if len(seen) > 2000:
+                seen.clear()
+            seen.add(rid)
+            kind = src.intercom_kind
+            labels = {
+                "lift_alarm": "Lift intercom",
+                "nursing_intercom": "Nursing intercom",
+                "carpark_intercom": "Carpark intercom",
+            }
+            default_l = labels.get(kind, "Intercom")
+            label = item.get("source_label") if isinstance(item.get("source_label"), str) else default_l
+            trigger_event = {
+                "source_id": src.source_id,
+                "feed_source": "remote",
+                "source_type": kind,
+                "source_label": label,
+                "incident_type_hint": str(item.get("reason") or kind),
+                "location": str(item.get("location") or item.get("zone") or src.location),
+                "timestamp": str(item.get("timestamp") or datetime.now(UTC).isoformat()),
+                "evidence_refs": item.get("evidence_refs") if isinstance(item.get("evidence_refs"), list) else [],
+                "confidence_score": float(item.get("confidence_score") or 0.7),
+            }
+            post_trigger_to_api(client, trigger_event)

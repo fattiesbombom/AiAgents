@@ -66,6 +66,17 @@ class Settings(BaseSettings):
     FRAME_SAMPLE_INTERVAL_SECONDS: int = 2
     TRIGGER_COOLDOWN_SECONDS: int = 30
 
+    # Wearable heartbeat watches (HeartbeatWatcher + start_perception_watchers)
+    HEARTBEAT_POLL_INTERVAL_SECONDS: float = 5.0
+    HEARTBEAT_NO_SIGNAL_THRESHOLD: int = 3
+    HEARTBEAT_FLAT_LINE_THRESHOLD: int = 10
+    HEARTBEAT_ELEVATED_BPM: int = 140
+    HEARTBEAT_ELEVATED_DURATION_SECONDS: float = 60.0
+    HEARTBEAT_TRIGGER_COOLDOWN_SECONDS: float = 120.0
+    # Comma-separated officer_id|poll_url (e.g. uuid|http://127.0.0.1:9100/health)
+    HEARTBEAT_WATCHERS: str = ""
+    TRIGGER_API_BASE_URL: str = "http://127.0.0.1:8000"
+
     # FastAPI
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000

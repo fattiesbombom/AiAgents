@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import jwt
@@ -17,6 +17,83 @@ from mcp.server.fastmcp import FastMCP
 from backend.config import settings
 
 mcp = FastMCP("auth-db", host="127.0.0.1", port=settings.MCP_AUTH_DB_PORT)
+
+CertisRank = Literal["SO", "SSO", "SS", "SSS", "CSO"]
+DeploymentType = Literal["ground", "command_centre"]
+
+RANK_PERMISSIONS: dict[CertisRank, list[str]] = {
+    "SO": ["respond_incident", "view_own_tasks", "submit_report"],
+    "SSO": [
+        "respond_incident",
+        "view_own_tasks",
+        "submit_report",
+        "operate_scc",
+        "monitor_cctv",
+        "manage_keys",
+    ],
+    "SS": [
+        "respond_incident",
+        "view_all_incidents",
+        "submit_report",
+        "operate_scc",
+        "monitor_cctv",
+        "dispatch_ground",
+        "approve_escalation",
+        "manage_incident",
+    ],
+    "SSS": [
+        "respond_incident",
+        "view_all_incidents",
+        "submit_report",
+        "operate_scc",
+        "monitor_cctv",
+        "dispatch_ground",
+        "approve_escalation",
+        "conduct_audit",
+        "risk_assessment",
+    ],
+    "CSO": ["*"],
+}
+
+RANK_LABELS: dict[CertisRank, str] = {
+    "SO": "Security Officer",
+    "SSO": "Senior Security Officer",
+    "SS": "Security Supervisor",
+    "SSS": "Senior Security Supervisor",
+    "CSO": "Chief Security Officer",
+}
+
+_CERTIS_RANKS = frozenset(RANK_PERMISSIONS.keys())
+
+
+def _parse_certis_rank(meta: dict[str, Any]) -> CertisRank | None:
+    r = meta.get("rank")
+    if isinstance(r, str):
+        u = r.strip().upper()
+        if u in _CERTIS_RANKS:
+            return u  # type: ignore[return-value]
+    legacy = meta.get("role")
+    if legacy == "admin":
+        return "CSO"
+    if isinstance(legacy, str):
+        u = legacy.strip().upper()
+        if u in _CERTIS_RANKS:
+            return u  # type: ignore[return-value]
+    return None
+
+
+def _default_deployment(rank: CertisRank) -> DeploymentType:
+    if rank == "SO":
+        return "ground"
+    return "command_centre"
+
+
+def _can_approve_escalation(rank: CertisRank) -> bool:
+    return rank in ("SS", "SSS", "CSO")
+
+
+def _can_operate_scc(rank: CertisRank) -> bool:
+    return rank in ("SSO", "SS", "SSS", "CSO")
 
 
 def _supabase_url() -> str:
@@ -57,14 +134,47 @@ async def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=10.0)
 
 
+async def _fetch_profile_row(
+    client: httpx.AsyncClient, base_url: str, service_key: str, user_id: str
+) -> dict[str, Any] | None:
+    """Load ``public.profiles`` via PostgREST (requires table exposed in Supabase API)."""
+    r = await client.get(
+        f"{base_url}/rest/v1/profiles",
+        params={"id": f"eq.{user_id}", "select": "*"},
+        headers={
+            "Authorization": f"Bearer {service_key}",
+            "apikey": service_key,
+            "Accept": "application/json",
+            "Accept-Profile": "public",
+        },
+    )
+    if r.status_code not in (200, 206):
+        return None
+    data = r.json()
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return data[0]
+    return None
+
+
+def _rank_from_profile_row(row: dict[str, Any]) -> CertisRank | None:
+    raw = row.get("rank")
+    if isinstance(raw, str) and raw in _CERTIS_RANKS:
+        return raw  # type: ignore[return-value]
+    return None
+
+
 @mcp.tool()
 async def get_user_role(user_id: str) -> dict:
-    """Return role/permissions/organisation from Supabase user metadata."""
+    """Return Certis rank, permissions, deployment, zone, and badge from Supabase.
+
+    Prefer ``public.profiles`` (PostgREST). If no row exists, fall back to
+    ``auth`` admin user ``user_metadata`` (``rank``, ``assigned_zone``, etc.).
+    """
     url = _supabase_url()
     service_key = _supabase_service_role_key()
 
     async with await _client() as client:
-        r = await client.get(
+        auth_r = await client.get(
             f"{url}/auth/v1/admin/users/{user_id}",
             headers={
                 "Authorization": f"Bearer {service_key}",
@@ -72,23 +182,99 @@ async def get_user_role(user_id: str) -> dict:
             },
         )
 
-    if r.status_code != 200:
-        return {"role": None, "permissions": None, "organisation": None}
+        if auth_r.status_code != 200:
+            return {
+                "role": None,
+                "rank": None,
+                "role_label": None,
+                "permissions": None,
+                "can_approve_escalation": False,
+                "can_operate_scc": False,
+                "assigned_zone": None,
+                "deployment_type": None,
+                "badge_id": None,
+                "organisation": None,
+            }
 
-    data = r.json()
-    meta = (data.get("user_metadata") or {}) if isinstance(data, dict) else {}
-    role = meta.get("role")
-    organisation = meta.get("organisation")
-    permissions = meta.get("permissions")
-    if permissions is None and isinstance(role, str):
-        permissions = _role_permissions().get(role)
+        auth_data = auth_r.json()
+        meta = (auth_data.get("user_metadata") or {}) if isinstance(auth_data, dict) else {}
+        legacy_role = meta.get("role")
+        organisation = meta.get("organisation")
 
-    return {"role": role, "permissions": permissions, "organisation": organisation}
+        profile = await _fetch_profile_row(client, url, service_key, user_id)
+
+        if profile:
+            rank = _rank_from_profile_row(profile)
+            if rank is None:
+                rank = "SO"
+            role_label = profile.get("role_label")
+            if not isinstance(role_label, str) or not role_label.strip():
+                role_label = RANK_LABELS[rank]
+            dt_raw = profile.get("deployment_type")
+            if dt_raw in ("ground", "command_centre"):
+                deployment_type: DeploymentType = dt_raw  # type: ignore[assignment]
+            else:
+                deployment_type = _default_deployment(rank)
+            assigned_zone = profile.get("assigned_zone")
+            badge_id = profile.get("badge_id")
+            perms = list(RANK_PERMISSIONS[rank])
+            return {
+                "role": legacy_role,
+                "rank": rank,
+                "role_label": role_label,
+                "permissions": perms,
+                "can_approve_escalation": _can_approve_escalation(rank),
+                "can_operate_scc": _can_operate_scc(rank),
+                "assigned_zone": assigned_zone if isinstance(assigned_zone, str) else None,
+                "deployment_type": deployment_type,
+                "badge_id": badge_id if isinstance(badge_id, str) else None,
+                "organisation": organisation,
+            }
+
+        rank = _parse_certis_rank(meta if isinstance(meta, dict) else {})
+
+        if rank is None:
+            return {
+                "role": legacy_role,
+                "rank": None,
+                "role_label": None,
+                "permissions": None,
+                "can_approve_escalation": False,
+                "can_operate_scc": False,
+                "assigned_zone": meta.get("assigned_zone") if isinstance(meta, dict) else None,
+                "deployment_type": None,
+                "badge_id": None,
+                "organisation": organisation,
+            }
+
+        dt_raw = meta.get("deployment_type") if isinstance(meta, dict) else None
+        if dt_raw in ("ground", "command_centre"):
+            deployment_type_fb: DeploymentType = dt_raw  # type: ignore[assignment]
+        else:
+            deployment_type_fb = _default_deployment(rank)
+
+        perms = list(RANK_PERMISSIONS[rank])
+
+        return {
+            "role": legacy_role,
+            "rank": rank,
+            "role_label": RANK_LABELS[rank],
+            "permissions": perms,
+            "can_approve_escalation": _can_approve_escalation(rank),
+            "can_operate_scc": _can_operate_scc(rank),
+            "assigned_zone": meta.get("assigned_zone") if isinstance(meta, dict) else None,
+            "deployment_type": deployment_type_fb,
+            "badge_id": meta.get("badge_id") if isinstance(meta.get("badge_id"), str) else None,
+            "organisation": organisation,
+        }
 
 
 @mcp.tool()
 async def get_role_permissions(role: str) -> dict:
-    """Return permissions definition for a role."""
+    """Return permissions for a Certis rank (SO, SSO, …) or legacy role name."""
+    u = role.strip().upper() if isinstance(role, str) else ""
+    if u in _CERTIS_RANKS:
+        return {"permissions": RANK_PERMISSIONS[u]}  # type: ignore[index]
     return _role_permissions().get(role, {})
 
 

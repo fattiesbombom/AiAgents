@@ -58,7 +58,7 @@ async def get_recent_motion_events(source_type: str, minutes_back: int = 10) -> 
         rows = await conn.fetch(
             """
             SELECT id, source_id, source_type, feed_source, detected_objects, confidence,
-                   snapshot_path, timestamp
+                   snapshot_path, source_label, timestamp
             FROM motion_events
             WHERE source_type = $1 AND timestamp >= $2
             ORDER BY timestamp DESC
@@ -122,6 +122,48 @@ async def check_employee_authorisation(badge_id: str, zone: str) -> dict:
 
 
 @mcp.tool()
+async def get_unacknowledged_events_for_zone(zone: str, minutes_back: int = 15) -> dict[str, Any]:
+    """Return recent unacknowledged alarm events for a zone and recent motion events (best-effort zone match)."""
+    pool = await _get_pool()
+    since = _since_ts(minutes_back)
+    zone_like = f"%{zone}%" if zone else "%"
+    async with pool.acquire() as conn:
+        alarm_rows = await conn.fetch(
+            """
+            SELECT id, alarm_type, zone, severity, source_label, timestamp, acknowledged
+            FROM alarm_events
+            WHERE timestamp >= $1
+              AND COALESCE(acknowledged, FALSE) = FALSE
+              AND ($2::text = '' OR zone = $2 OR zone ILIKE $3 OR source_label ILIKE $3)
+            ORDER BY timestamp DESC
+            LIMIT 50
+            """,
+            since,
+            zone or "",
+            zone_like,
+        )
+        motion_rows = []
+        if zone:
+            motion_rows = await conn.fetch(
+                """
+                SELECT id, source_id, source_type, feed_source, detected_objects, confidence,
+                       snapshot_path, source_label, timestamp
+                FROM motion_events
+                WHERE timestamp >= $1
+                  AND (source_id ILIKE $2 OR COALESCE(source_label, '') ILIKE $2)
+                ORDER BY timestamp DESC
+                LIMIT 50
+                """,
+                since,
+                zone_like,
+            )
+    alarms = [_row_to_dict(r) for r in alarm_rows]
+    motions = [_row_to_dict(r) for r in motion_rows]
+    has_anomaly = bool(alarms) or bool(motions)
+    return {"alarms": alarms, "motion_events": motions, "has_anomaly": has_anomaly}
+
+
+@mcp.tool()
 async def get_recent_alarm_events(
     minutes_back: int = 10, alarm_type: str | None = None
 ) -> list[dict]:
@@ -132,7 +174,7 @@ async def get_recent_alarm_events(
         if alarm_type:
             rows = await conn.fetch(
                 """
-                SELECT id, alarm_type, zone, severity, timestamp, acknowledged
+                SELECT id, alarm_type, zone, severity, source_label, timestamp, acknowledged
                 FROM alarm_events
                 WHERE alarm_type = $1 AND timestamp >= $2
                 ORDER BY timestamp DESC
@@ -143,7 +185,7 @@ async def get_recent_alarm_events(
         else:
             rows = await conn.fetch(
                 """
-                SELECT id, alarm_type, zone, severity, timestamp, acknowledged
+                SELECT id, alarm_type, zone, severity, source_label, timestamp, acknowledged
                 FROM alarm_events
                 WHERE timestamp >= $1
                 ORDER BY timestamp DESC
@@ -177,6 +219,28 @@ async def search_sop_chunks(query_embedding: list[float], top_k: int = 5) -> lis
             top_k,
         )
     return [_row_to_dict(r) for r in rows]
+
+
+@mcp.tool()
+async def get_agent_state(incident_id: str) -> dict:
+    """Return persisted LangGraph state JSON for an incident (includes sop_chunks when present)."""
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT state_json FROM incident_agent_state WHERE incident_id = $1::uuid",
+            incident_id,
+        )
+    if not row or row["state_json"] is None:
+        return {"sop_chunks": [], "state_json": None}
+    sj = row["state_json"]
+    if isinstance(sj, str):
+        sj = json.loads(sj)
+    chunks: list = []
+    if isinstance(sj, dict):
+        raw = sj.get("sop_chunks")
+        if isinstance(raw, list):
+            chunks = raw
+    return {"sop_chunks": chunks, "state_json": sj}
 
 
 @mcp.tool()

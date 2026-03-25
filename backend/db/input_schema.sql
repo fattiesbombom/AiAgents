@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS motion_events (
   detected_objects TEXT[],
   confidence FLOAT,
   snapshot_path VARCHAR,
+  source_label VARCHAR,
   timestamp TIMESTAMPTZ
 );
 
@@ -37,8 +38,27 @@ CREATE TABLE IF NOT EXISTS alarm_events (
   alarm_type VARCHAR,
   zone VARCHAR,
   severity VARCHAR,
+  source_label VARCHAR,
   timestamp TIMESTAMPTZ,
   acknowledged BOOLEAN DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS mop_reports (
+  id UUID PRIMARY KEY,
+  report_method VARCHAR,
+  location VARCHAR,
+  description TEXT,
+  source_label VARCHAR,
+  timestamp TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS c2_alerts (
+  id UUID PRIMARY KEY,
+  alert_code VARCHAR,
+  zone VARCHAR,
+  severity VARCHAR,
+  raw_payload JSONB,
+  timestamp TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS sop_documents (
@@ -54,6 +74,10 @@ CREATE TABLE IF NOT EXISTS sop_documents (
 CREATE INDEX IF NOT EXISTS sop_documents_embedding_hnsw_idx
   ON sop_documents
   USING hnsw (embedding vector_cosine_ops);
+
+-- Existing deployments
+ALTER TABLE motion_events ADD COLUMN IF NOT EXISTS source_label VARCHAR;
+ALTER TABLE alarm_events ADD COLUMN IF NOT EXISTS source_label VARCHAR;
 
 CREATE TABLE IF NOT EXISTS incident_agent_state (
   incident_id UUID PRIMARY KEY,

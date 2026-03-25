@@ -70,11 +70,22 @@ class DemoPipeline:
         if parts:
             print("[DEMO][YOLO] " + ", ".join(parts))
 
-    def _post_trigger(self, client: httpx.Client, evidence_path: str, confidence: float, incident_type_hint: str | None):
+    def _post_trigger(
+        self,
+        client: httpx.Client,
+        evidence_path: str,
+        confidence: float,
+        incident_type_hint: str | None,
+        *,
+        manual: bool,
+    ):
+        st = "manual_trigger" if manual else "body_worn"
+        label = "Demo manual trigger (mobility)" if manual else "Demo body-worn (IP Webcam)"
         trigger_event: dict[str, Any] = {
             "source_id": "demo-body-worn",
             "feed_source": "live",
-            "source_type": "video",
+            "source_type": st,
+            "source_label": label,
             "incident_type_hint": incident_type_hint,
             "location": "demo",
             "timestamp": datetime.now(UTC).isoformat(),
@@ -118,7 +129,13 @@ class DemoPipeline:
 
                     try:
                         hint = "manual" if manual else None
-                        self._post_trigger(client, snapshot_path, max_conf if not manual else 1.0, hint)
+                        self._post_trigger(
+                            client,
+                            snapshot_path,
+                            max_conf if not manual else 1.0,
+                            hint,
+                            manual=manual,
+                        )
                         self._last_trigger_at = time.time()
                         print("[DEMO] Trigger fired" + (" (manual)" if manual else ""))
                     except Exception as e:

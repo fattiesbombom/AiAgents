@@ -25,11 +25,13 @@ class VideoPipeline:
         sample_interval_seconds: float | None = None,
         cooldown_seconds: float | None = None,
         confidence_threshold: float = 0.5,
+        source_label: str | None = None,
     ):
         self.source_id = source_id
         self.stream_url = stream_url
         self.feed_source = feed_source
         self.location = location
+        self.source_label = source_label
 
         self.sample_interval_seconds = float(sample_interval_seconds or settings.FRAME_SAMPLE_INTERVAL_SECONDS)
         self.cooldown_seconds = float(cooldown_seconds or settings.TRIGGER_COOLDOWN_SECONDS)
@@ -85,10 +87,15 @@ class VideoPipeline:
 
                 snapshot_path = self.reader.save_snapshot(frame)
 
+                st: Literal["body_worn", "cctv"] = "body_worn" if self.feed_source == "live" else "cctv"
+                label = self.source_label or (
+                    f"Body-worn {self.source_id}" if self.feed_source == "live" else f"CCTV {self.source_id}"
+                )
                 trigger_event: dict[str, Any] = {
                     "source_id": self.source_id,
                     "feed_source": self.feed_source,
-                    "source_type": "video",
+                    "source_type": st,
+                    "source_label": label,
                     "incident_type_hint": None,
                     "location": self.location,
                     "timestamp": datetime.now(UTC).isoformat(),

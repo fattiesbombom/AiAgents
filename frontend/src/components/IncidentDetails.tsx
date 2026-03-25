@@ -18,6 +18,11 @@ export function IncidentDetails({ incident }: Props) {
         <Info label="Risk Score" value={incident.risk_score?.toFixed(2)} />
         <Info label="Police Notified" value={String(incident.police_notified)} />
         <Info label="Review Status" value={incident.human_review_status ?? undefined} />
+        <Info label="Responder rank" value={incident.responder_rank ?? undefined} />
+        <Info label="Responder role" value={incident.responder_role_label ?? undefined} />
+        <Info label="Can approve escalation" value={String(incident.can_approve_escalation ?? false)} />
+        <Info label="Reviewer rank" value={incident.human_reviewer_rank ?? undefined} />
+        <Info label="Deployment" value={incident.deployment_type ?? undefined} />
       </div>
 
       <div className="spacer" />
