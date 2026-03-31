@@ -43,7 +43,7 @@ def _coerce_int_optional(v: Any) -> int | None:
 
 async def _supervisor_load_auth(state: IncidentState, raw: dict, user_id: Any) -> None:
     """Load role from Auth MCP into state."""
-    auth_url = f"http://127.0.0.1:{settings.MCP_AUTH_DB_PORT}"
+    auth_url = settings.mcp_auth_http_url()
     if not user_id:
         state["responder_rank"] = None
         state["role_type"] = None
@@ -94,7 +94,7 @@ async def _supervisor_load_auth(state: IncidentState, raw: dict, user_id: Any) -
 
 async def _supervisor_persist_incident(state: IncidentState, raw: dict) -> None:
     """Create/update output DB incident + supervisor timeline from current state."""
-    out_url = f"http://127.0.0.1:{settings.MCP_OUTPUT_DB_PORT}"
+    out_url = settings.mcp_output_http_url()
     if not out_url:
         return
     now = datetime.now(UTC)

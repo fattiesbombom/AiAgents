@@ -40,7 +40,7 @@ async def sop_retrieval(state: IncidentState) -> IncidentState:
     state["incident_query_embedding"] = [float(x) for x in embedding]
 
     chunks: list[dict] = []
-    in_url = f"http://127.0.0.1:{settings.MCP_INPUT_DB_PORT}"
+    in_url = settings.mcp_input_http_url()
     if in_url:
         try:
             chunks = await _mcp_call(
@@ -63,7 +63,7 @@ async def sop_retrieval(state: IncidentState) -> IncidentState:
     )
     state["updated_at"] = datetime.now(UTC).isoformat()
 
-    out_url = f"http://127.0.0.1:{settings.MCP_OUTPUT_DB_PORT}"
+    out_url = settings.mcp_output_http_url()
     if out_url:
         try:
             await _mcp_call(

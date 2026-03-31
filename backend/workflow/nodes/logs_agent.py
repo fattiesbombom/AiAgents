@@ -38,7 +38,7 @@ async def logs_agent(state: IncidentState) -> IncidentState:
     alarm_events: list[dict] = []
     authorisation: dict | None = None
 
-    in_url = f"http://127.0.0.1:{settings.MCP_INPUT_DB_PORT}"
+    in_url = settings.mcp_input_http_url()
     if in_url:
         try:
             motion_events = await _mcp_call(
@@ -92,7 +92,7 @@ async def logs_agent(state: IncidentState) -> IncidentState:
     state["confidence_score"] = float(result.confidence_score)
     state["updated_at"] = datetime.now(UTC).isoformat()
 
-    out_url = f"http://127.0.0.1:{settings.MCP_OUTPUT_DB_PORT}"
+    out_url = settings.mcp_output_http_url()
     if out_url:
         try:
             await _mcp_call(

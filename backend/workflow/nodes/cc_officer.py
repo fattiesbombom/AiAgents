@@ -72,7 +72,7 @@ async def cc_officer(state: IncidentState) -> IncidentState:
     state["dispatched_officer_role"] = result.dispatched_officer_role
     state["updated_at"] = datetime.now(UTC).isoformat()
 
-    out_url = f"http://127.0.0.1:{settings.MCP_OUTPUT_DB_PORT}"
+    out_url = settings.mcp_output_http_url()
     if out_url:
         try:
             await _mcp_call(

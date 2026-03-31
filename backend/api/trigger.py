@@ -93,9 +93,7 @@ class DispatchRequest(BaseModel):
 
 
 def _mcp_output_url() -> str:
-    # In this codebase, MCP servers are local processes; server URL is constructed
-    # from the configured port.
-    return f"http://127.0.0.1:{settings.MCP_OUTPUT_DB_PORT}"
+    return settings.mcp_output_http_url()
 
 
 _configure_logging()

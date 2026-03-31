@@ -16,7 +16,12 @@ from mcp.server.fastmcp import FastMCP
 
 from backend.config import settings
 
-mcp = FastMCP("auth-db", host="127.0.0.1", port=settings.MCP_AUTH_DB_PORT)
+mcp = FastMCP(
+    "auth-db",
+    host="127.0.0.1",
+    port=settings.MCP_AUTH_DB_PORT,
+    streamable_http_path="/",
+)
 
 CertisRank = Literal["SO", "SSO", "SS", "SSS", "CSO"]
 DeploymentType = Literal["ground", "command_centre"]

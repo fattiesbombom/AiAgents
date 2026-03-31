@@ -19,7 +19,7 @@ async def police_escalation(state: IncidentState) -> IncidentState:
 
     from backend.config import settings
 
-    server_url = f"http://127.0.0.1:{settings.MCP_OUTPUT_DB_PORT}"
+    server_url = settings.mcp_output_http_url()
     if server_url:
         from mcp.client.session import ClientSession
         from mcp.client.streamable_http import streamable_http_client

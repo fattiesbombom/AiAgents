@@ -39,7 +39,7 @@ def _unwrap_dict(res: Any) -> dict[str, Any]:
 
 
 async def _ensure_output_incident_row(state: IncidentState, raw: dict) -> None:
-    out_url = f"http://127.0.0.1:{settings.MCP_OUTPUT_DB_PORT}"
+    out_url = settings.mcp_output_http_url()
     now = datetime.now(UTC)
     gi = _unwrap_dict(await _mcp_call(out_url, "get_incident", {"incident_id": state["incident_id"]}))
     if gi.get("id"):
@@ -82,8 +82,8 @@ async def _ensure_output_incident_row(state: IncidentState, raw: dict) -> None:
 
 async def routine_task(state: IncidentState) -> IncidentState:
     raw = dict(state.get("raw_input") or {})
-    out_url = f"http://127.0.0.1:{settings.MCP_OUTPUT_DB_PORT}"
-    in_url = f"http://127.0.0.1:{settings.MCP_INPUT_DB_PORT}"
+    out_url = settings.mcp_output_http_url()
+    in_url = settings.mcp_input_http_url()
     now_iso = datetime.now(UTC).isoformat()
     task_t = state.get("routine_task_type") or "patrol"
     actor = _actor_label(state)

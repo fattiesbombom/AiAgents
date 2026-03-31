@@ -6,7 +6,6 @@ Agents must never connect to the DB directly; they call these MCP tools.
 from __future__ import annotations
 
 import json
-import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -15,15 +14,20 @@ from mcp.server.fastmcp import FastMCP
 
 from backend.config import settings
 
-mcp = FastMCP("input-db", host="127.0.0.1", port=settings.MCP_INPUT_DB_PORT)
+mcp = FastMCP(
+    "input-db",
+    host="127.0.0.1",
+    port=settings.MCP_INPUT_DB_PORT,
+    streamable_http_path="/",
+)
 
 _pool: asyncpg.Pool | None = None
 
 
 def _input_db_url() -> str:
-    url = os.getenv("INPUT_DB_URL")
+    url = (settings.INPUT_DB_URL or "").strip()
     if not url:
-        raise RuntimeError("Missing required env var INPUT_DB_URL")
+        raise RuntimeError("Missing required env var INPUT_DB_URL (set in .env or environment)")
     return url
 
 

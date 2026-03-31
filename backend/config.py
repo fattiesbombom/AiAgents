@@ -66,6 +66,23 @@ class Settings(BaseSettings):
     FRAME_SAMPLE_INTERVAL_SECONDS: int = 2
     TRIGGER_COOLDOWN_SECONDS: int = 30
 
+    # Input DB poller (discrete events → POST /trigger; see input_db_watcher)
+    INPUT_DB_WATCHER_ENABLED: bool = False
+    INPUT_DB_POLL_INTERVAL_SECONDS: float = 5.0
+    # Comma-separated: alarm_events, mop_reports, access_logs, motion_events, c2_alerts
+    INPUT_DB_TABLES: str = "alarm_events,mop_reports,access_logs"
+    # Comma-separated severities to emit (case-insensitive); empty = all severities
+    INPUT_DB_ALARM_SEVERITIES: str = ""
+    # If true, skip alarm_events rows where acknowledged IS TRUE
+    INPUT_DB_ALARM_SKIP_ACKNOWLEDGED: bool = True
+    # Comma-separated attempt_result values that should fire a trigger (case-insensitive)
+    INPUT_DB_ACCESS_TRIGGER_RESULTS: str = "denied,failed,tailgating,rejected"
+    # Minimum motion_events.confidence to trigger when motion_events is enabled (0 = any)
+    INPUT_DB_MOTION_MIN_CONFIDENCE: float = 0.0
+    # Persist poll cursors to this JSON file; empty = in-memory only (lost on restart)
+    INPUT_DB_CURSOR_FILE: str = "./data/input_db_watcher_cursors.json"
+    INPUT_DB_POLL_BATCH_SIZE: int = 50
+
     # Wearable heartbeat watches (HeartbeatWatcher + start_perception_watchers)
     HEARTBEAT_POLL_INTERVAL_SECONDS: float = 5.0
     HEARTBEAT_NO_SIGNAL_THRESHOLD: int = 3
@@ -83,10 +100,19 @@ class Settings(BaseSettings):
     # Comma-separated origins in .env (not JSON)
     ALLOWED_ORIGINS: str = "http://localhost:5173"
 
-    # MCP
+    # MCP — streamable HTTP on each port (see FastMCP streamable_http_path="/" in *_db_server).
     MCP_INPUT_DB_PORT: int = 8001
     MCP_OUTPUT_DB_PORT: int = 8002
     MCP_AUTH_DB_PORT: int = 8003
+
+    def mcp_input_http_url(self) -> str:
+        return f"http://127.0.0.1:{self.MCP_INPUT_DB_PORT}"
+
+    def mcp_output_http_url(self) -> str:
+        return f"http://127.0.0.1:{self.MCP_OUTPUT_DB_PORT}"
+
+    def mcp_auth_http_url(self) -> str:
+        return f"http://127.0.0.1:{self.MCP_AUTH_DB_PORT}"
 
     # Demo mode — Android IP Webcam
     PHONE_IP: str = ""

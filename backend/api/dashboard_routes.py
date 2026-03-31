@@ -22,11 +22,11 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 def _mcp_output_url() -> str:
-    return f"http://127.0.0.1:{settings.MCP_OUTPUT_DB_PORT}"
+    return settings.mcp_output_http_url()
 
 
 def _mcp_input_url() -> str:
-    return f"http://127.0.0.1:{settings.MCP_INPUT_DB_PORT}"
+    return settings.mcp_input_http_url()
 
 
 async def _out_tool(name: str, arguments: dict) -> dict:

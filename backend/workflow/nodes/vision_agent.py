@@ -87,7 +87,7 @@ async def vision_agent(state: IncidentState) -> IncidentState:
     # Keep evidence refs as paths; descriptions go to timeline/audit.
     state["updated_at"] = datetime.now(UTC).isoformat()
 
-    out_url = f"http://127.0.0.1:{settings.MCP_OUTPUT_DB_PORT}"
+    out_url = settings.mcp_output_http_url()
     if out_url:
         try:
             await _mcp_call(

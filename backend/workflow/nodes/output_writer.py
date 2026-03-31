@@ -39,7 +39,7 @@ async def output_writer(state: IncidentState) -> IncidentState:
     now_iso = now_dt.isoformat()
     state["updated_at"] = now_iso
 
-    server_url = f"http://127.0.0.1:{settings.MCP_OUTPUT_DB_PORT}"
+    server_url = settings.mcp_output_http_url()
     if not server_url:
         return state
 

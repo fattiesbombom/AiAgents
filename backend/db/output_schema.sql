@@ -1,4 +1,9 @@
 -- Output DB schema (PostgreSQL).
+--
+-- Unqualified object names resolve via search_path. If your session uses an empty or custom
+-- search_path, CREATE TABLE may not land in public and the following CREATE INDEX can fail with
+-- 42P01 (relation does not exist). This line keeps DBeaver / CLI runs predictable.
+SET search_path TO public;
 
 CREATE TABLE IF NOT EXISTS incidents (
   id UUID PRIMARY KEY,
@@ -103,16 +108,16 @@ CREATE TABLE IF NOT EXISTS incident_reports (
 );
 
 -- Daily routine / work-schedule row per officer (optional; empty = dashboard empty state).
-CREATE TABLE IF NOT EXISTS officer_daily_tasks (
+CREATE TABLE IF NOT EXISTS public.officer_daily_tasks (
   id UUID PRIMARY KEY,
   task_date DATE NOT NULL,
   officer_rank VARCHAR NOT NULL,
-  zone VARCHAR,
+  "zone" VARCHAR,
   task_type VARCHAR,
-  status VARCHAR,
+  "status" VARCHAR,
   description TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS officer_daily_tasks_lookup_idx
-  ON officer_daily_tasks (task_date, officer_rank, zone);
+  ON public.officer_daily_tasks (task_date, officer_rank, "zone");

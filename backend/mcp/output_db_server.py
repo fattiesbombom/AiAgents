@@ -6,7 +6,6 @@ Agents must never connect to the DB directly; they call these MCP tools.
 from __future__ import annotations
 
 import json
-import os
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -16,15 +15,21 @@ from mcp.server.fastmcp import FastMCP
 
 from backend.config import settings
 
-mcp = FastMCP("output-db", host="127.0.0.1", port=settings.MCP_OUTPUT_DB_PORT)
+mcp = FastMCP(
+    "output-db",
+    host="127.0.0.1",
+    port=settings.MCP_OUTPUT_DB_PORT,
+    streamable_http_path="/",
+)
 
 _pool: asyncpg.Pool | None = None
 
 
 def _output_db_url() -> str:
-    url = os.getenv("OUTPUT_DB_URL")
+    # Use pydantic-loaded settings (.env); os.getenv is often unset in child processes.
+    url = (settings.OUTPUT_DB_URL or "").strip()
     if not url:
-        raise RuntimeError("Missing required env var OUTPUT_DB_URL")
+        raise RuntimeError("Missing required env var OUTPUT_DB_URL (set in .env or environment)")
     return url
 
 
